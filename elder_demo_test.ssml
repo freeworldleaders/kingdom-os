@@ -1,0 +1,7 @@
+<speak>
+  <voice name="en-US-Wavenet-D">
+    <prosody rate="medium">
+      <p><s>Place your palms lightly. This is a short test of the elder guide.</s></p>
+    </prosody>
+  </voice>
+</speak>

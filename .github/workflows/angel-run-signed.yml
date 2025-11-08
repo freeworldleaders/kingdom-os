@@ -1,0 +1,68 @@
+name: Ross Fire - Angel Run (Signed URLs)
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * *'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  synthesize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OUTDIR: mp3s
+      SSML_PATTERN: 'elder_*.ssml'
+      VOICE: 'en-US-Wavenet-D'
+      LANG: 'en-US'
+      GCS_PREFIX: 'elder-demo'
+      SERVICE_ACCOUNT_EMAIL: 'rossfire-sa@hallowed-pager-471409-g5.iam.gserviceaccount.com'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v1
+        with:
+          workload_identity_provider: "projects/1093028173781/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "rossfire-sa@hallowed-pager-471409-g5.iam.gserviceaccount.com"
+          export_default_credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-cloud-texttospeech google-cloud-storage google-api-python-client google-auth requests tqdm
+
+      - name: Run Signed TTS CLI and upload
+        env:
+          GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
+          CHAT_WEBHOOK_URL: ${{ secrets.CHAT_WEBHOOK_URL }}
+        run: |
+          mkdir -p $OUTDIR
+          python ssml_to_mp3_google_signed.py \
+            --input-dir . \
+            --pattern "$SSML_PATTERN" \
+            --outdir "$OUTDIR" \
+            --voice "$VOICE" \
+            --lang "$LANG" \
+            --upload-bucket "$GCS_BUCKET" \
+            --gcs-prefix "$GCS_PREFIX" \
+            --parallel 2 \
+            --signed-ttl 604800 \
+            --webhook "$CHAT_WEBHOOK_URL"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: elder-mp3s
+          path: mp3s/
