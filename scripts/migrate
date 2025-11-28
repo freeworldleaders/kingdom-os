@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+DATABASE_URL="${DATABASE_URL:-}"
+DRY_RUN=0
+EXECUTE=0
+MIGRATIONS_DIR="${MIGRATIONS_DIR:-migrations}"
+
+function usage() {
+  cat <<EOF
+Usage: $0 --database-url <URL> [--dry-run | --execute] [--migrations-dir <dir>]
+--dry-run (default) runs each migration inside a transaction and then ROLLBACK.
+EOF
+  exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --database-url) DATABASE_URL="$2"; shift 2;;
+    --dry-run) DRY_RUN=1; shift;;
+    --execute) EXECUTE=1; shift;;
+    --migrations-dir) MIGRATIONS_DIR="$2"; shift 2;;
+    --help) usage;;
+    *) echo "Unknown arg: $1"; usage;;
+  esac
+done
+
+if [[ -z "$DATABASE_URL" ]]; then
+  echo "ERROR: --database-url required"
+  usage
+fi
+
+if (( DRY_RUN && EXECUTE )); then
+  echo "ERROR: cannot use both --dry-run and --execute"
+  exit 1
+fi
+
+if (( !DRY_RUN && !EXECUTE )); then
+  DRY_RUN=1
+fi
+
+if ! command -v psql >/dev/null; then
+  echo "ERROR: psql required"
+  exit 1
+fi
+
+MIG_FILES=()
+while IFS= read -r -d '' f; do MIG_FILES+=("$f"); done < <(find "$MIGRATIONS_DIR" -maxdepth 1 -type f -name "*.sql" -print0 | sort -z)
+
+if [ "${#MIG_FILES[@]}" -eq 0 ]; then
+  echo "No migrations found in $MIGRATIONS_DIR"
+  exit 0
+fi
+
+for mig in "${MIG_FILES[@]}"; do
+  echo "----------------------------------------------------------------"
+  echo "Processing migration: $mig"
+  if (( DRY_RUN )); then
+    echo "DRY-RUN: executing $mig inside transaction"
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<PSQL
+BEGIN;
+\i '$mig';
+ROLLBACK;
+PSQL
+    echo "Dry-run OK: $mig"
+  else
+    echo "EXECUTE: applying $mig"
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$mig"
+    echo "Applied: $mig"
+  fi
+done
+
+echo "All migrations processed."
